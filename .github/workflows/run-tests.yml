@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       PYTHONUNBUFFERED: '1'
-      TEST_WRAPPER_DIR: tests-wrapper
+      TEST_WRAPPER_DIR: test_wrapper
       MAIN_RUNNER: main.py
 
     steps:
