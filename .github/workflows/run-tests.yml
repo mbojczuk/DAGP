@@ -49,20 +49,21 @@ jobs:
         run: |
           LOG_PATH="${{ steps.run_tests.outputs.log_path }}"
           python - <<'PY' "${LOG_PATH}" > extracted_summary.json
-          import json, sys
+          import json, re, sys
           logpath = sys.argv[1]
-          with open(logpath, "r", encoding="utf-8") as f:
-              s = f.read()
-          # Try to find the last JSON object in the log
-          idx = s.rfind("{")
-          if idx == -1:
+          data = open(logpath, encoding="utf-8").read()
+
+          # Find the last JSON block (from the last "{" to the matching "}")
+          match = re.findall(r'\{\s*.*\s*\}', data, re.DOTALL)
+          if not match:
               print("{}")
               sys.exit(0)
-          cand = s[idx:]
+
+          candidate = match[-1].strip()
           try:
-              obj = json.loads(cand)
+              obj = json.loads(candidate)
               print(json.dumps(obj))
-          except Exception:
+          except Exception as e:
               print("{}")
           PY
           cat extracted_summary.json
@@ -94,27 +95,32 @@ jobs:
           import json, sys
           s = json.loads(sys.argv[1])
           lines = []
-          lines.append("### Test-wrapper results")
-          if any(v == "fail" for v in s.values()):
-              lines.append("- Overall: **FAIL**")
+          lines.append("### 🧪 Test-wrapper Results")
+
+          overall_fail = any(v == "fail" for v in s.values() if not v.endswith("_message"))
+          if overall_fail:
+              lines.append("**❌ Overall: FAIL**")
           else:
-              lines.append("- Overall: **PASS**")
+              lines.append("**✅ Overall: PASS**")
           lines.append("")
-          lines.append("**Details**:")
+
+          lines.append("| Test | Result | Message |")
+          lines.append("|-------|:--------:|---------|")
+
           for k in sorted(s.keys()):
               if k.endswith("_message"):
                   continue
               status = s[k]
-              if status == "success":
-                  lines.append(f"- {k}: success")
-              else:
-                  msg = s.get(f"{k}_message", "")
-                  lines.append(f"- {k}: fail — {msg}")
-          lines.append("")
-          lines.append("<details><summary>Full JSON summary</summary>\n\n```json\n")
+              emoji = "✅" if status == "success" else "❌"
+              msg = s.get(f"{k}_message", "")
+              lines.append(f"| `{k}` | {emoji} {status} | {msg} |")
+
+          lines.append("\n<details><summary>Full JSON summary</summary>\n\n```json")
           lines.append(json.dumps(s, indent=2))
-          lines.append("\n```\n</details>")
+          lines.append("```\n</details>")
+
           print("\n".join(lines))
+
           PY
           COMMENT_BODY=$(jq -Rs . < pr_comment.md)
           API_URL="https://api.github.com/repos/${REPO}/issues/${PR_NUM}/comments"
