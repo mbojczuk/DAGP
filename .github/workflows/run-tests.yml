@@ -43,76 +43,76 @@ jobs:
         id: extract
         run: |
           LOG_PATH="${{ steps.run_tests.outputs.log_path }}"
-          python - <<'PY' > extracted_summary.json
-            import json,sys
-            logpath = sys.argv[1]
-            with open(logpath, "r", encoding="utf-8") as f:
-                s = f.read()
-            # Try to find the last JSON object in the log
-            idx = s.rfind("{")
-            if idx == -1:
-                print("{}")
-                sys.exit(0)
-            cand = s[idx:]
-            try:
-                obj = json.loads(cand)
-                print(json.dumps(obj))
-            except Exception:
-                print("{}")
-            PY "${LOG_PATH}"
-                    cat extracted_summary.json
-                    echo "summary<<EOF" >> $GITHUB_OUTPUT
-                    cat extracted_summary.json >> $GITHUB_OUTPUT
-                    echo "EOF" >> $GITHUB_OUTPUT
+          python - <<'PY' "${LOG_PATH}" > extracted_summary.json
+          import json, sys
+          logpath = sys.argv[1]
+          with open(logpath, "r", encoding="utf-8") as f:
+              s = f.read()
+          # Try to find the last JSON object in the log
+          idx = s.rfind("{")
+          if idx == -1:
+              print("{}")
+              sys.exit(0)
+          cand = s[idx:]
+          try:
+              obj = json.loads(cand)
+              print(json.dumps(obj))
+          except Exception:
+              print("{}")
+          PY
+          cat extracted_summary.json
+          echo "summary<<EOF" >> $GITHUB_OUTPUT
+          cat extracted_summary.json >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
-                - name: Fail job if any test failed
-                    id: fail_if_tests_failed
-                    run: |
-                    python - <<'PY'
-            import json,sys
-            s = json.loads(sys.argv[1])
-            if any(v == "fail" for v in s.values()):
-                print("One or more tests failed.")
-                sys.exit(1)
-            print("All tests passed.")
-            PY "${{ steps.extract.outputs.summary }}"
+      - name: Fail job if any test failed
+        id: fail_if_tests_failed
+        run: |
+          python - <<'PY' "${{ steps.extract.outputs.summary }}"
+          import json, sys
+          s = json.loads(sys.argv[1])
+          if any(v == "fail" for v in s.values()):
+              print("One or more tests failed.")
+              sys.exit(1)
+          print("All tests passed.")
+          PY
 
-                - name: Post PR comment with results
-                    if: ${{ github.event_name == 'pull_request' }}
-                    env:
-                    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                    run: |
-                    SUMMARY='${{ steps.extract.outputs.summary }}'
-                    PR_NUM=${{ github.event.pull_request.number }}
-                    REPO="${{ github.repository }}"
-                    python - <<'PY' > pr_comment.md
-            import json,sys
-            s = json.loads(sys.argv[1])
-            lines = []
-            lines.append("### Test-wrapper results")
-            if any(v == "fail" for v in s.values()):
-                lines.append("- Overall: **FAIL**")
-            else:
-                lines.append("- Overall: **PASS**")
-            lines.append("")
-            lines.append("**Details**:")
-            for k in sorted(s.keys()):
-                if k.endswith("_message"):
-                    continue
-                status = s[k]
-                if status == "success":
-                    lines.append(f"- {k}: success")
-                else:
-                    msg = s.get(f"{k}_message", "")
-                    lines.append(f"- {k}: fail — {msg}")
-            lines.append("")
-            lines.append("<details><summary>Full JSON summary</summary>\n\n```json\n")
-            lines.append(json.dumps(s, indent=2))
-            lines.append("\n```\n</details>")
-            print("\n".join(lines))
-            PY "$SUMMARY"
-                    COMMENT_BODY=$(jq -Rs . < pr_comment.md)
-                    API_URL="https://api.github.com/repos/${REPO}/issues/${PR_NUM}/comments"
-                    curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Content-Type: application/json" \
-                        --data "{\"body\": ${COMMENT_BODY}}" \
-                        "${API_URL}" > /dev/null
+      - name: Post PR comment with results
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          SUMMARY='${{ steps.extract.outputs.summary }}'
+          PR_NUM=${{ github.event.pull_request.number }}
+          REPO="${{ github.repository }}"
+          python - <<'PY' "$SUMMARY" > pr_comment.md
+          import json, sys
+          s = json.loads(sys.argv[1])
+          lines = []
+          lines.append("### Test-wrapper results")
+          if any(v == "fail" for v in s.values()):
+              lines.append("- Overall: **FAIL**")
+          else:
+              lines.append("- Overall: **PASS**")
+          lines.append("")
+          lines.append("**Details**:")
+          for k in sorted(s.keys()):
+              if k.endswith("_message"):
+                  continue
+              status = s[k]
+              if status == "success":
+                  lines.append(f"- {k}: success")
+              else:
+                  msg = s.get(f"{k}_message", "")
+                  lines.append(f"- {k}: fail — {msg}")
+          lines.append("")
+          lines.append("<details><summary>Full JSON summary</summary>\n\n```json\n")
+          lines.append(json.dumps(s, indent=2))
+          lines.append("\n```\n</details>")
+          print("\n".join(lines))
+          PY
+          COMMENT_BODY=$(jq -Rs . < pr_comment.md)
+          API_URL="https://api.github.com/repos/${REPO}/issues/${PR_NUM}/comments"
+          curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Content-Type: application/json" \
+            --data "{\"body\": ${COMMENT_BODY}}" \
+            "${API_URL}" > /dev/null
