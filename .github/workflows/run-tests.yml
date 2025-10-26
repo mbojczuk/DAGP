@@ -39,7 +39,7 @@ jobs:
         run: |
           LOG_PATH="${GITHUB_WORKSPACE}/test-run-output.log"
           echo "Running: python ${TEST_WRAPPER_DIR}/${MAIN_RUNNER}"
-          python "${TEST_WRAPPER_DIR}/${MAIN_RUNNER}" --tests hello,always_pass > "${LOG_PATH}" 2>&1 || true
+          python "${TEST_WRAPPER_DIR}/${MAIN_RUNNER}" > "${LOG_PATH}" 2>&1 || true
           cat "${LOG_PATH}"
           # expose path as step output
           echo "log_path=${LOG_PATH}" >> $GITHUB_OUTPUT
