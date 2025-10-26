@@ -1,4 +1,9 @@
-name: Run test-wrapper on push and PR
+name: Run test-wrapper on push and pull request
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
 
 on:
   push:
@@ -11,92 +16,121 @@ jobs:
   run-tests:
     runs-on: ubuntu-latest
     env:
-      PYTHONUNBUFFERED: 1
-      TEST_WRAPPER_DIR: tests-wrapper
+      PYTHONUNBUFFERED: '1'
+      TEST_WRAPPER_DIR: test_wrapper
       MAIN_RUNNER: main.py
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
+      - name: Set up Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install dependencies (if any)
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then python -m pip install -r requirements.txt; fi
 
       - name: Run tests and capture output
         id: run_tests
         run: |
-          cd "${TEST_WRAPPER_DIR}"
-          python "${MAIN_RUNNER}" > ../test-run-output.log 2>&1 || true
-          echo "log_saved=../test-run-output.log" >> $GITHUB_OUTPUT
+          LOG_PATH="${GITHUB_WORKSPACE}/test-run-output.log"
+          echo "Running: python ${TEST_WRAPPER_DIR}/${MAIN_RUNNER}"
+          python "${TEST_WRAPPER_DIR}/${MAIN_RUNNER}" > "${LOG_PATH}" 2>&1 || true
+          cat "${LOG_PATH}"
+          # expose path as step output
+          echo "log_path=${LOG_PATH}" >> $GITHUB_OUTPUT
 
-      - name: Extract final JSON summary from runner output
+      - name: Extract final JSON summary
         id: extract
         run: |
-          LOGFILE=../test-run-output.log
-          python - <<'PY' > extracted_summary.json
-import sys
-import json
+          LOG_PATH="${{ steps.run_tests.outputs.log_path }}"
+          python - <<'PY' "${LOG_PATH}" > extracted_summary.json
+          import json, re, sys
+          logpath = sys.argv[1]
+          data = open(logpath, encoding="utf-8").read()
 
-logpath = sys.argv[1]
-with open(logpath, "r", encoding="utf-8") as f:
-    s = f.read()
-idx = s.rfind("{")
-if idx == -1:
-    print("{}")
-    sys.exit(0)
-cand = s[idx:]
-try:
-    obj = json.loads(cand)
-    print(json.dumps(obj))
-except Exception:
-    print("{}")
-PY "${LOGFILE}"
+          # Find the last JSON block (from the last "{" to the matching "}")
+          match = re.findall(r'\{\s*.*\s*\}', data, re.DOTALL)
+          if not match:
+              print("{}")
+              sys.exit(0)
 
-      - name: Post PR comment with results (pull_request only)
-        if: ${{ github.event_name == 'pull_request' }}
+          candidate = match[-1].strip()
+          try:
+              obj = json.loads(candidate)
+              print(json.dumps(obj))
+          except Exception as e:
+              print("{}")
+          PY
+          cat extracted_summary.json
+          echo "summary<<EOF" >> $GITHUB_OUTPUT
+          cat extracted_summary.json >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Fail job if any test failed
+        id: fail_if_tests_failed
+        run: |
+          cat <<'JSON' > summary.json
+          ${{ steps.extract.outputs.summary }}
+          JSON
+
+          python - <<'PY'
+          import json, sys
+          with open("summary.json") as f:
+              s = json.load(f)
+          if any(v == "fail" for k, v in s.items() if not k.endswith("_message")):
+              print("❌ One or more tests failed.")
+              sys.exit(1)
+          print("✅ All tests passed.")
+          PY
+
+
+      - name: Post PR comment with results
+        if: always() && github.event_name == 'pull_request'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          SUMMARY='${{ steps.extract.outputs.summary }}'
           PR_NUM=${{ github.event.pull_request.number }}
           REPO="${{ github.repository }}"
-          SUMMARY=$(cat extracted_summary.json)
+          python - <<'PY' "$SUMMARY" > pr_comment.md
+          import json, sys
+          s = json.loads(sys.argv[1])
+          lines = []
+          lines.append("### 🧪 Test Results")
 
-          python - <<'PY' > pr_comment.md
-import json
-import sys
+          overall_fail = any(v == "fail" for v in s.values() if not v.endswith("_message"))
+          if overall_fail:
+              lines.append("**❌ Overall: FAIL**")
+          else:
+              lines.append("**✅ Overall: PASS**")
+          lines.append("")
 
-s = json.loads(sys.argv[1])
-lines = []
-lines.append("### Test-wrapper results")
-if any(v == "fail" for v in s.values()):
-    lines.append("- Overall: **FAIL** ❌")
-else:
-    lines.append("- Overall: **PASS** ✅")
-lines.append("")
-lines.append("**Details**:")
-for k in sorted(s.keys()):
-    if k.endswith("_message"):
-        continue
-    status = s[k]
-    if status == "success":
-        lines.append(f"- {k}: ✅ success")
-    else:
-        msg = s.get(f"{k}_message", "")
-        lines.append(f"- {k}: ❌ fail — {msg}")
-lines.append("")
-lines.append("<details><summary>Full JSON summary</summary>\n\n```json\n")
-lines.append(json.dumps(s, indent=2))
-lines.append("\n```\n</details>")
-print("\n".join(lines))
-PY "${SUMMARY}"
+          lines.append("| Test | Result | Message |")
+          lines.append("|-------|:--------:|---------|")
 
-          COMMENT_BODY=$(cat pr_comment.md | jq -Rs .)
+          for k in sorted(s.keys()):
+              if k.endswith("_message"):
+                  continue
+              status = s[k]
+              emoji = "✅" if status == "success" else "❌"
+              msg = s.get(f"{k}_message", "")
+              lines.append(f"| `{k}` | {emoji} {status} | {msg} |")
+
+          lines.append("\n<details><summary>Full JSON summary</summary>\n\n```json")
+          lines.append(json.dumps(s, indent=2))
+          lines.append("```\n</details>")
+
+          print("\n".join(lines))
+          PY
+
+          COMMENT_BODY=$(jq -Rs . < pr_comment.md)
           API_URL="https://api.github.com/repos/${REPO}/issues/${PR_NUM}/comments"
           curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Content-Type: application/json" \
+            -H "Content-Type: application/json" \
             --data "{\"body\": ${COMMENT_BODY}}" \
-            "${API_URL}" > /dev/null
+            "${API_URL}"
