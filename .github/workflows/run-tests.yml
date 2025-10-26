@@ -39,3 +39,64 @@ jobs:
         run: |
           LOGFILE=../test-run-output.log
           python - <<'PY' > extracted_summary.json
+import sys
+import json
+
+logpath = sys.argv[1]
+with open(logpath, "r", encoding="utf-8") as f:
+    s = f.read()
+idx = s.rfind("{")
+if idx == -1:
+    print("{}")
+    sys.exit(0)
+cand = s[idx:]
+try:
+    obj = json.loads(cand)
+    print(json.dumps(obj))
+except Exception:
+    print("{}")
+PY "${LOGFILE}"
+
+      - name: Post PR comment with results (pull_request only)
+        if: ${{ github.event_name == 'pull_request' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUM=${{ github.event.pull_request.number }}
+          REPO="${{ github.repository }}"
+          SUMMARY=$(cat extracted_summary.json)
+
+          python - <<'PY' > pr_comment.md
+import json
+import sys
+
+s = json.loads(sys.argv[1])
+lines = []
+lines.append("### Test-wrapper results")
+if any(v == "fail" for v in s.values()):
+    lines.append("- Overall: **FAIL** ❌")
+else:
+    lines.append("- Overall: **PASS** ✅")
+lines.append("")
+lines.append("**Details**:")
+for k in sorted(s.keys()):
+    if k.endswith("_message"):
+        continue
+    status = s[k]
+    if status == "success":
+        lines.append(f"- {k}: ✅ success")
+    else:
+        msg = s.get(f"{k}_message", "")
+        lines.append(f"- {k}: ❌ fail — {msg}")
+lines.append("")
+lines.append("<details><summary>Full JSON summary</summary>\n\n```json\n")
+lines.append(json.dumps(s, indent=2))
+lines.append("\n```\n</details>")
+print("\n".join(lines))
+PY "${SUMMARY}"
+
+          COMMENT_BODY=$(cat pr_comment.md | jq -Rs .)
+          API_URL="https://api.github.com/repos/${REPO}/issues/${PR_NUM}/comments"
+          curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Content-Type: application/json" \
+            --data "{\"body\": ${COMMENT_BODY}}" \
+            "${API_URL}" > /dev/null

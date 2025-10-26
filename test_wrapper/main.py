@@ -42,9 +42,9 @@ def run_named_test(name: str, config: Dict[str, Any] | None = None) -> Dict[str,
     status = res.get("result", "fail")
     message = res.get("message", "")
     if status == "success":
-        print(f"[{name}] success")
+        print(f"[{name}] ✅ success")
     else:
-        print(f"[{name}] fail: {message}")
+        print(f"[{name}] ❌ fail: {message}")
     return {"result": status, "message": message}
 
 def run_selected_tests(names: List[str]) -> Dict[str, Dict[str, str]]:
