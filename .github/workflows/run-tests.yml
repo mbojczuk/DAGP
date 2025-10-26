@@ -74,7 +74,7 @@ jobs:
       - name: Fail job if any test failed
         id: fail_if_tests_failed
         run: |
-          echo '${{steps.extract.outputs.summary}}'
+          echo "${{steps.extract.outputs.summary}}" > summary.json
           python - <<'PY'
           import json, sys
           with open("summary.json") as f:
