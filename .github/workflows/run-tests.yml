@@ -1,5 +1,10 @@
 name: Run test-wrapper on push and pull request
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
 on:
   push:
     branches:
