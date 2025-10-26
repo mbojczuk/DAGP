@@ -72,7 +72,6 @@ jobs:
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Fail job if any test failed
-        continue-on-error: true
         id: fail_if_tests_failed
         run: |
           echo '${{steps.extract.outputs.summary}}'
@@ -87,7 +86,7 @@ jobs:
           PY
 
       - name: Post PR comment with results
-        if: ${{ github.event_name == 'pull_request' }}
+        if: always() && ${{ github.event_name == 'pull_request' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -98,7 +97,7 @@ jobs:
           import json, sys
           s = json.loads(sys.argv[1])
           lines = []
-          lines.append("### 🧪 Test-wrapper Results")
+          lines.append("### 🧪 Test Results")
 
           overall_fail = any(v == "fail" for v in s.values() if not v.endswith("_message"))
           if overall_fail:
@@ -123,10 +122,11 @@ jobs:
           lines.append("```\n</details>")
 
           print("\n".join(lines))
-
           PY
+
           COMMENT_BODY=$(jq -Rs . < pr_comment.md)
           API_URL="https://api.github.com/repos/${REPO}/issues/${PR_NUM}/comments"
           curl -sS -H "Authorization: Bearer ${GITHUB_TOKEN}" -H "Content-Type: application/json" \
+            -H "Content-Type: application/json" \
             --data "{\"body\": ${COMMENT_BODY}}" \
-            "${API_URL}" > /dev/null
+            "${API_URL}"
